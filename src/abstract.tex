@@ -1,0 +1,24 @@
+\thispagestyle{empty}
+ 
+\begin{center}
+\textbf{Abstract}
+\end{center}
+
+In the current context of increasingly popular distributed data stores,
+replication and database partitioning are fundamental approaches to achieve
+load balancing, scalability, and fault tolerance. However, this comes at the
+cost of synchronization between different replicas of some mutable shared object
+in order to maintain them consistent. \textit{Conflict-free Replicated Data
+Types} (CRDTs) define new concepts to alleviate this problem. Provided that some
+simple mathematical properties hold, CRDTs ensure eventual consistency, such
+that replicas converge to a common state, equivalent to a correct sequential
+execution without foreground synchronization.
+
+This thesis studies the applicability of this model with the focus on a
+particular CRDT, a \textit{set} data type. An efficient algorithm for sending
+deltas of updates between replicas and a specification for partitioning a set
+replica into disjunctive subsets are introduced. Additionally, to cope with the
+problem of database increase in size, a garbage collection mechanism to reclaim
+obsolete elements from the set is discussed. This does not invalidate the CRDT
+properties. Lastly, the thesis shows design and implementation of a
+proof-of-concept client library for this data structure.

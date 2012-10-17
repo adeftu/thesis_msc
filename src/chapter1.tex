@@ -1,0 +1,115 @@
+\chapter{Introduction}
+
+\section{Motivation and Problem Definition}
+\label{sec:motivation_and_problem_definition}
+
+The increase in demand of highly available data, supported by the growing
+exposure of Internet services that make this data accessible, shows that there
+is an obvious need today to satisfy requirements that were never before a priority.
+Now, features like throughput, consistency, and fault-tolerance are necessities,
+not optimizations, and are included in the design of any modern distributed data
+system from the beginning. One cannot accept delays in database requests of more
+than a few hundred milliseconds or downtimes of even a few minutes. The trend is
+clear: we need to process more data, quicker, and without interruptions.
+
+\textit{Replication} is a technique which ensures fault-tolerance on one hand,
+while providing the means for achieving higher scalability and performance on the
+other hand. However, it introduces the problem of maintaining different replicas
+of the same logical data consistent with each other. Ideally, we want the data
+stores to be always available, strongly consistent, and to operate flawlessly in
+the presence of network failures. CAP is a well known
+theorem~\cite{Gilbert:2002:BCF:564585.564601} which states that any distributed
+computer system cannot provide simultaneous guarantees for the aforementioned
+requirements. The majority of the current Internet services prefer availability
+and partition tolerance, at the cost of a weaker form of consistency. The choice
+has the advantage of lower latencies for client requests and higher scalability,
+but achieving consistency between replicas still remains an open issue.
+
+One attractive approach is to provide \textit{eventual
+consistency}~\cite{DBLP:journals/queue/Vogels08a,
+Saito:2005:OR:1057977.1057980}, which allows any replica to apply updates
+locally and then to send the operations asynchronously to all the others. Thus,
+all replicas eventually apply all updates, possibly even in a different order.
+This weaker form of consistency, considered acceptable for some applications,
+has the advantage that data remains available when the network is partitioned.
+However, a complex background consensus algorithm for reconciling conflicting
+updates\footnote{A conflict is a combination of concurrent updates, which may be
+individually correct, but if taken together, would violate some invariant.} is
+generally needed~\cite{Terry:1995:MUC:224056.224070}, which makes current
+approaches ad-hoc and error-prone. Amazon's Shopping Cart constitutes a
+well-known example in this sense~\cite{DeCandia:2007:DAH:1294261.1294281}.
+Alternatively, several systems execute an update immediately and later discover
+that it conflicts with another~\cite{Terry:1995:MUC:224056.224070}. So they
+roll-back to resolve the conflict.
+
+The thesis studies a particular kind of data types which were designed
+specifically to solve this problem. \textit{Conflict-free Replicated Data Types}
+(CRDTs) have simple mathematical properties which confer them \textit{strong
+eventual consistency}, as defined in
+Section~\ref{sec:strong_eventual_consistency}. Replicas of CRDTs are proved to
+converge in a self-stabilising manner without blocking client operations and
+without having to deal with complex conflict resolution or roll-backs. The
+drawback of this model is that it is not universal.
+Chapter~\ref{ch:state_of_the_art} presents the trade-offs that should be
+considered for these types.
+
+A strong motivation to study this concept comes from current demands to support
+frequent writes of runtime data to replicated, distributed stores, and to
+provide low latencies for reads. Because a consensus algorithm for conflicting
+updates would become a bottleneck, CRDTs are very attractive, as a replica may
+execute any operation locally. Consistency is achieved later during a
+background asynchronous phase in which all replicas eventually apply all
+updates. A second benefit is given by the composability nature of CRDTs: simple
+structures (counters, shared mutable variables, sets) can constitute building
+blocks in forming more complex ones, such as graphs.
+
+\section{Objectives}
+\label{sec:objectives}
+
+This thesis presents a study on principles of CRDTs together with associated
+mathematical properties in the context of data replication.
+Chapter~\ref{ch:state_of_the_art} introduces the theoretical background from the
+perspective of two approaches, \textit{state-based} and
+\textit{operation-based}, and shows that CRDTs are a viable solution to the CAP
+theorem by intrinsically employing a form of eventual consistency,
+\textit{Strong Eventual Consistency} (SEC). As mentioned in the previous
+section, the drawbacks of current alternatives which require consensus for
+conflict arbitration between concurrent updates are avoided.
+
+The main goals of the thesis are to improve a particular CRDT, a \textit{set}
+data type, and to study its applicability. To achieve these objectives, the
+following contributions are made:
+\begin{itemize}
+  \item Because one variant of CRDTs transfer full states between replicas when
+  propagating updates, an improvement to the set type is provided which
+  transmits only deltas.
+  \item Acknowledging the fact that large data structures cannot be efficiently
+  stored on just one machine, a partitioning scheme is often desired. Sets of
+  elements fit well in this category of structures, being easily partitioned in
+  several disjunctive subsets and distributed across a cluster of machines.
+  This solves both the problem of data growth by achieving higher scalability
+  and the problem of performance bottleneck by sharing the load. Thus, a second
+  contribution is an extension to the set specification to support per-replica
+  partitioning capability.
+  \item Since CRDTs usually lead to an increase in database size with each
+  update operation, an asynchronous garbage collection process to reclaim
+  obsolete elements from the set is discussed.
+  \item Finally, these concepts are put into practice through the implementation
+  and evaluation of a client library backed by Redis~\cite{redis}, a widely used
+  key-value store.
+\end{itemize}
+
+\section{Thesis Structure}
+\label{sec:thesis_structure}
+
+The remainder of this thesis is organized as follows.
+Chapter~\ref{ch:state_of_the_art} presents the state-of-the-art on CRDT
+system model, two functional approaches: state-based and operation-based, and
+gives a number of examples of CRDTs known in the literature: counters,
+registers (mutable shared variables), sets, and graphs. In
+Chapter~\ref{ch:design_of_sharded_or-set} the initial problem statement is
+reiterated in the light of this model and the design for an improved set type is
+described. Chapter~\ref{ch:implementation_and_evaluation} next presents the
+client library implementation and evaluation results for this data structure.
+Finally, Chapter~\ref{ch:conclusions} concludes the thesis with a summary of
+lessons learned and gives insights into possible future contributions.

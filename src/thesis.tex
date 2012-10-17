@@ -1,0 +1,117 @@
+\documentclass[a4paper,12pt,oneside]{report}
+ 
+\usepackage[top=3.81cm,bottom=3cm,inner=3.5cm,outer=2.54cm]{geometry}
+
+\usepackage{ucs}
+\usepackage[utf8x]{inputenc}
+
+\usepackage[pdftex]{xcolor,graphicx}
+\graphicspath{{../media/}}
+
+\usepackage{expl3}
+\ExplSyntaxOn
+\cs_new_eq:NN \Rpt \prg_replicate:nn
+\ExplSyntaxOff
+
+\usepackage{hyperref}
+\hypersetup{unicode=true,%
+    colorlinks=true,%
+    citecolor=black,%
+    filecolor=black,%
+    linkcolor=black,%
+    urlcolor=black}
+
+ 
+\usepackage{afterpage}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\algnewcommand\Payload{\textbf{payload} }
+\algnewcommand\Update{\textbf{update} }
+\algnewcommand\Query{\textbf{query} }
+\algnewcommand\Compare{\textbf{compare} }
+\algnewcommand\Merge{\textbf{merge} }
+\algnewcommand\Pre{\textbf{pre} }
+\algnewcommand\Let{\textbf{let} }
+\algnewcommand\Prepare{\textbf{prepare}}
+\algnewcommand\Effect{\textbf{effect}}
+\algnewcommand\In{\textbf{in }}
+\algnewcommand\Land{\textbf{and }}
+\algnewcommand\Break{\textbf{break}}
+\algnewcommand\Null{\textbf{null}}
+\algnewcommand\True{\textbf{true}}
+\algnewcommand\False{\textbf{false}}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{mathtools}
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+
+\usepackage[german,english]{babel}
+
+\usepackage{appendix}
+\usepackage{enumerate}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhead{}
+\fancyhead[R]{\nouppercase{\rightmark}}
+
+\usepackage{setspace}
+
+\usepackage{listings}
+
+\lstset{
+  basicstyle=\normalfont\small,
+  columns=fullflexible,
+  showstringspaces=false,
+  commentstyle=\color{gray}\upshape
+}
+
+\lstdefinelanguage{XML}
+{
+  morestring=[b]",
+  morestring=[s]{>}{<},
+  morecomment=[s]{<?}{?>},
+  identifierstyle=\bfseries,
+  keywordstyle=\bfseries,
+  morekeywords={xmlns,version,type}
+}
+
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{spverbatim}
+\usepackage{caption}
+\usepackage{subcaption}
+\captionsetup[subfloat]{font=footnotesize}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2ex}
+% \linespread{1.5}
+\setcounter{tocdepth}{3}
+
+\usepackage{../styles/tumlogo}
+
+\begin{document}
+
+\include{cover}
+\include{disclaimer}
+\include{acknowledgements}
+\include{abstract}
+
+\begin{spacing}{0.5}
+\tableofcontents
+\end{spacing}
+\newpage
+
+\include{chapter1}
+\include{chapter2}
+\include{chapter3}
+\include{chapter4}
+\include{chapter5}
+
+\bibliographystyle{ieeetr}
+\bibliography{refs}
+
+\end{document}

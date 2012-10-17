@@ -1,0 +1,16 @@
+15.04
+- background research on CRDTs
+- definition of requirements and goals
+- algorithm design for OR-sets with sharding and delta-sync
+- components design + interfaces between them + class diagram
+01.06
+- implementation
+  + purely functional
+  ? RDMS based
+  ? key-value store (redis) based
+01.09
+- tests running and results gathering
+15.09
+- thesis writing
+15.10
+- submission

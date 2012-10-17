@@ -1,0 +1,316 @@
+\appendix
+\chapter{Notes}
+
+\section{Sharded OR-sets}
+
+\begin{spverbatim}
+- A set of elements is stored in a replica cluster (RC).
+- Replicas (mirrors) of one set are stored in different RCs.
+- Inside of a RC the set is partitioned across all replica stores (RS) of the RC.
+- Each RS stores a subset (shard) of the whole set from the RC, according to a distribution function H.
+- Each RS has a local timestamp vector T[rc][rs] storing the logical clock for each RC and RS.
+- Each local update in the RS is reflected by incrementing the corresponding cell in T[][].
+- When pulling updates in RC=A from RC=B the following steps are performed:
+	1. Compute a minimum T[][] of all RS in A, called T_A[][].
+	2. Compute a minimum T[][] of all RS in B, called T_B[][].
+	3. Collect all updates from each RS in B after the T_A[][].
+	4. Distribute the collected updates to each RS in A according to H.
+	5. For each RS in A, after successfully adding the updates, set its local T[][] to max(T[][], T_B[][]).
+- If a RS fails in either A or B, a sync will miss the updates from the failed RS and step 5. will set a lower T than the real one, but the next sync will recover the missed updates.
+\end{spverbatim}
+
+\begin{algorithm}
+  \small
+  \caption{Sharded OR-sets}
+  \begin{algorithmic}[0]
+    \State \texttt{payload} $A$, $R$, $T$
+    \State -{}- $A$ - set of added elements ($e$, $t$, $rc$, $rs$)
+    \State -{}- $R$ - set of removed elements ($e$, $t$, $rc$, $rs$, $t'$, $rc'$, $rs'$)
+    \State -{}- $T$ - timestamp matrix, $T[rc][rs]$ - timestamp for shard $rs$ from cluster $rc$
+    \State -{}- $e$ - element, $t$ - timestamp, $rc$ - replica cluster, $rs$ - replica shard
+    \State \texttt{initial} $\emptyset$, $\emptyset$, $[[0]]$
+    
+    \Statex
+
+    \Procedure{add}{$e, rc, rs$}
+      \State \texttt{pre} $e$ is sharded here
+
+      \State \texttt{let} $t = T[rc][rs] + 1$
+      \State $A := A \cup \{(e, t, rc, rs)\}$
+      \State $T[rc][rs] := t$
+    \EndProcedure
+
+    \Procedure{remove}{$e, rc', rs'$}
+      \State \texttt{pre} $e$ is sharded here
+      \State \texttt{let} $t' = T[rc'][rs'] + 1$
+      \State $R := R \cup \{(e, t, rc, rs, t', rc', rs') | (e, t, rc, rs) \in A\}$
+      \State $T[rc'][rs'] := t'$
+    \EndProcedure
+    
+    \Function{lookup}{$e, \_, \_$} : boolean
+      \State \texttt{pre} $e$ is sharded here
+      \State \Return $\begin{aligned}[t]
+                        & \exists (e, t, rc, rs) \in A : T[rc][rs] \geq t \; \land \\
+                        & \nexists (e, t, rc, rs, t', rc', rs') \in R : T[rc'][rs'] \geq t'
+                      \end{aligned}$
+    \EndFunction
+    
+    \Procedure{merge}{$rc_{X}, rc_{Y}$}
+      \State $\texttt{let } \tilde{T}_{X}[rc][rs] = min (\cup T_{rs_{X}}[rc][rs]), \forall rs_{X} \in rc_{X}, rc \neq rc_{X}$
+      \State $\texttt{let } \tilde{T}_{X}[rc_{X}][rs] = max (\cup T_{rs_{X}}[rc_{X}][rs]), \forall rs_{X} \in rc_{X}$
+      \State $\texttt{let } \tilde{T}_{Y} = \text{similar to } \tilde{T}_{X}$
+      \State $\texttt{let } \cup A_{Y}' = \cup \{ (e, t, rc, rs) \in A_{rs_{Y}} | \tilde{T}_{X}[rc][rs] < t \}, \forall rs_{Y} \in rc_{Y}$
+      \State $\texttt{let } \cup R_{Y}' = \cup \{ (e, t, rc, rs, t', rc', rs') \in R_{rs_{Y}} | \tilde{T}_{X}[rc'][rs'] < t' \}, \forall rs_{Y} \in rc_{Y}$
+      \State $\forall rs_{X} \in rc_{X}$:
+      \State\hspace{\algorithmicindent}
+             $\begin{aligned}[t]
+                & A_{rs_{X}} := A_{rs_{X}} \cup \{ (e, t, rc, rs) \in \cup A_{Y}' | e \text{ is sharded to } rs_{X} \} \\
+                & R_{rs_{X}} := R_{rs_{X}} \cup \{ (e, t, rc, rs, t', rc', rs') \in \cup R_{Y}' | e \text{ is sharded to } rs_{X} \} \\
+                & T_{rs_{X}} := max(T_{rs_{X}}, \tilde{T}_{Y})
+              \end{aligned}$
+    \EndProcedure
+
+  \end{algorithmic}
+\end{algorithm}
+
+\clearpage
+
+\section{Sharded OR-sets with Redis - scheme}
+
+\begin{algorithm}
+  \small
+  \caption{Sharded OR-sets with Redis - scheme}
+  \begin{algorithmic}[0]
+    \State \underline{topology} $\rightarrow$ \{rc:rs:ip:port\} \Comment{set} 
+    \State \underline{timestamp}:rc:rs $\rightarrow$ t \Comment{string} 
+    \State \underline{element}:id $\begin{aligned}[t]
+                                    & \rightarrow \text{\underline{value}} \rightarrow \text{value} \\
+                                    & \rightarrow \text{\underline{added.t}} \rightarrow \text{t} \\
+                                    & \rightarrow \text{\underline{added.rc}} \rightarrow \text{rc} \\
+                                    & \rightarrow \text{\underline{added.rs}} \rightarrow \text{rs} \\
+                                    & \rightarrow \text{\underline{removed.t}} \rightarrow \text{t'} \\
+                                    & \rightarrow \text{\underline{removed.rc}} \rightarrow \text{rc'} \\
+                                    & \rightarrow \text{\underline{removed.rs}} \rightarrow \text{rs'}
+                                  \end{aligned}$ \Comment{hash}
+    \State \underline{index}:rc:rs $\rightarrow$ $\langle \text{t, id} \rangle$ \Comment{sorted set}
+    \State \underline{ids}:value $\rightarrow$ \{id\} \Comment{set}
+    \State \underline{element:next.id} $\rightarrow$ id \Comment{string}
+  \end{algorithmic}
+\end{algorithm}
+
+\textit{Note}: underlined words represent hard-coded strings, whereas
+non-underlined ones should be replaced with their corresponding value. 
+
+The topology is stored at key \texttt{\underline{topology}} as a set of strings,
+each string representing a Redis store identified by the unique pair
+\texttt{rc:rs} and \texttt{ip:port} on which the Redis server is listening.
+Timestamps are stored at keys \texttt{\underline{timestamp}:rc:rs} for each
+\texttt{rc} and {rs}. The Redis DB stores all tuples as elements, each element
+having a unique id. When a new element is added to the store, its id is computed
+by incrementing the global value stored at key
+\texttt{\underline{element:next.id}}. Using this id, we can store the element's
+attributes (value, added time, added rc, etc.) in the hash found at
+\texttt{\underline{element}:id}. Because when we want to look up a value in the
+store we need to obtain all ids of the corresponding elements, we store these
+ids at \texttt{\underline{ids}:value}. At \texttt{\underline{index}:rc:rs} we
+have a set of element ids sorted by their added/removed timestamp for fast
+computing elements added after a given timestamp.
+
+\clearpage
+
+\section{Sharded OR-sets with Redis - operations}
+
+\begin{algorithm}[h!]
+  \small
+  \caption{Sharded OR-sets with Redis - operations}
+  \begin{algorithmic}[0]
+    \Procedure{add}{$value, rc, rs$}
+      \State $t$ = \texttt{incr} \underline{timestamp}:$rc$:$rs$
+      \State $id$ = \texttt{incr} \underline{element:next.id}
+      \State \texttt{hmset} \underline{element}:$id$ $\begin{aligned}[t]
+                                                       & \text{\underline{value}}\:value \\
+                                                       & \text{\underline{added.t}}\:t \\
+                                                       & \text{\underline{added.rc}}\:rc \\
+                                                       & \text{\underline{added.rs}}\:rs
+                                                      \end{aligned}$
+      \State \texttt{sadd} \underline{ids}:$value$ $id$
+      \State \texttt{zadd} \underline{index}:$rc$:$rs$ $t$ $id$
+    \EndProcedure
+    
+    \Procedure{remove}{$value, rc', rs'$}
+      \State $t'$ = \texttt{incr} \underline{timestamp}:$rc'$:$rs'$
+      \State $ids[]$ = \texttt{smembers} \underline{ids}:$value$
+      \ForAll{$id \in ids[]$}
+        \State ($rc$, $rs$) = \texttt{hmget} \underline{element}:$id$ \underline{added.rc} \underline{added.rs}
+        \State \texttt{zrem} \underline{index}:$rc$:$rs$ $id$
+        \State \texttt{hmset} \underline{element}:$id$ $\begin{aligned}[t]
+                                                       & \text{\underline{removed.t}}\:t' \\
+                                                       & \text{\underline{removed.rc}}\:rc' \\
+                                                       & \text{\underline{removed.rs}}\:rs'
+                                                      \end{aligned}$
+        \State \texttt{zadd} \underline{index}:$rc'$:$rs'$ $t'$ $id$
+      \EndFor
+    \EndProcedure
+    
+    \Procedure{lookup}{$value$} : boolean
+      \State $ids[]$ = \texttt{smembers} \underline{ids}:$value$
+      \ForAll{$id1 \in ids[]$}
+        \State ($t1$, $rc1$, $rs1$, $t1'$) = \texttt{hmget} \underline{element}:$id1$ \underline{added.t} \underline{added.rc} \underline{added.rs} \underline{removed.t}
+        \If{$t1'$ $\not=$ null}
+          \If{(\texttt{get} \underline{timestamp}:$rc1$:$rs1$) $\ge$ $t1$}
+            \State $exists$ = TRUE
+            \ForAll{$id2 \in ids[]$}
+              \State ($\_$, $t2$, $rc2$, $rs2$, $t2'$, $rc2'$, $rs2'$) = \texttt{hgetall} \underline{element}:$id2$
+              \If{$(t2,rc2,rs2) == (t1,rc1,rs1) \:\land$ \\
+                  \Rpt{6}{\hskip\algorithmicindent} $t2' \not= \text{null} \:\land$ \\
+                  \Rpt{6}{\hskip\algorithmicindent} $(\texttt{get}\:\text{\underline{timestamp}}:rc2':rs2') \ge t2'$}
+                  \State $exists$ = FALSE
+              \EndIf
+            \EndFor
+            \If{$exists$}
+              \State \Return TRUE
+            \EndIf
+          \EndIf
+        \EndIf 
+      \EndFor
+      \Return FALSE
+    \EndProcedure
+    
+    \Procedure{get\_timestamps}{} : $[$$rc$:$rs$:$t$$]$
+      \State $stores[]$ = \texttt{smembers} \underline{topology}
+      \State $timestamps[]$ = $[]$
+      \ForAll{$rc$:$rs$:$ip$:$port$ $ \in stores[]$}
+        \State $t$ = \texttt{get} \underline{timestamp}:$rc$:$rs$
+        \State $timestamps[]$ += $rc$:$rs$:$t$
+      \EndFor
+      \Return $timestamps[]$
+    \EndProcedure
+    \algstore{redis_procedures_break}
+  \end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[h!]
+  \small
+  \caption{Redis procedures for OR-set}
+  \begin{algorithmic}[0]
+    \algrestore{redis_procedures_break}
+    \Procedure{get\_updates}{$t, rc, rs$} : $[$$value$:$t$:$rc$:$rs$:$t'$:$rc'$:$rs'$$]$
+      \State $ids[]$ = \texttt{zrangebyscore} \underline{index}:$rc$:$rs$ $(t$ $+inf$
+      \State $updates[]$ = $[]$
+      \ForAll{$id \in ids[]$}
+        \State ($value$, $t1$, $rc1$, $rs1$, $t1'$, $rc1'$, $rs1'$) = \texttt{hgetall} \underline{element}:$id$
+        \State $updates[]$ += $value$:$t1$:$rc1$:$rs1$:$t1'$:$rc1'$:$rs1'$
+      \EndFor
+      \Return $updates[]$
+    \EndProcedure
+    
+    \Procedure{add\_update}{$value, t, rc, rs, t', rc', rs'$}
+      \State $id$ = \texttt{incr} \underline{element:next.id}
+      \If{$t'$ $\not=$ null}
+        \State \texttt{hmset} \underline{element}:$id$ $\begin{aligned}[t]
+                                                         & \text{\underline{value}}\:value \\
+                                                         & \text{\underline{added.t}}\:t \\
+                                                         & \text{\underline{added.rc}}\:rc \\
+                                                         & \text{\underline{added.rs}}\:rs \\
+                                                         & \text{\underline{removed.t}}\:t' \\
+                                                         & \text{\underline{removed.rc}}\:rc' \\
+                                                         & \text{\underline{removed.rs}}\:rs'
+                                                       \end{aligned}$
+        \State \texttt{zadd} \underline{index}:$rc'$:$rs'$ $t'$ $id$
+      \Else
+        \State \texttt{hmset} \underline{element}:$id$ $\begin{aligned}[t]
+                                                         & \text{\underline{value}}\:value \\
+                                                         & \text{\underline{added.t}}\:t \\
+                                                         & \text{\underline{added.rc}}\:rc \\
+                                                         & \text{\underline{added.rs}}\:rs
+                                                       \end{aligned}$
+        \State \texttt{zadd} \underline{index}:$rc$:$rs$ $t$ $id$
+      \EndIf
+      \State \texttt{sadd} \underline{ids}:$value$ $id$
+    \EndProcedure
+  \end{algorithmic}
+\end{algorithm}
+
+\clearpage
+
+\section{Garbage collection}
+
+\begin{spverbatim}
+- There are 2 types of update tuples: ADD and RMV.
+- Every tuple has an associated TTL which is set when the tuple is added to the store (either directly or through synchronization).
+- Requirement for maintaining semantics: At any given store, the tuples corresponding to one element (ADD and RMV) which were inserted at replica A should be expired in the same order in which they were originally inserted at replica A.
+- Motivation: In a store, there can be many tuples for an element each coming from different replicas: A, B, C, and so on. The only requirement is that tuples coming from replica A should expire in the same order in which they were originally added at replica A, those coming from replica B should expire in the same order in which they were originally added at replica B, and so on.
+- Proof: This is because the lookup() method works on "observed" ADDs and RMVs. There are 2 cases:
+	1. ADD(a) + RMV(a)
+	Expected: lookup(a) = FALSE. If ADD(a) expires first and RMV(a) survives, then semantics doesn't change. The other way around is not allowed however. To ensure this, it is sufficient to set the same TTL for all tuples of 'a'. Then, the tuples will expire in the order in which they were added. Now, we need to maintain this constraint also when copying these tuples to other stores. Therefore, if when copying the tuples, we also copy the remaining TTL, these tuples will expire at the destination replica still in the same order as they do at the source. This can be achieved either by preserving the remaining TTL when we copy a tuple, or by preserving its physical time-of-death timestamp. The end result is the same: expiration order is preserved.
+	2. RMV(a) + ADD(a)
+	Similar to above. 
+- Because it's possible for ADD tuple to be added on a store, then propagated to another store and then here RMVed, we require that all stores set the same initial TTL for all tuples belonging to the same element.
+- We don't require that all stores have the same clock speed. We just require that expiration order of tuples for each element originating at one replica is preserved in all replicas: we want a partial order on the expiration. 
+- Why can't we use a longer lifetime for RMVs (than all the other observed ADDs)? Because if we have case 2. from above, RMV(a) + ADD(a), then it's possible for the ADD tuple to expire before the RMV one and lookup(a) will return FALSE which breaks the original semantics.
+
+
+Algorithm pseudocode:
+
+ADD(a):
+    tuple = (e, t, rc, rs)
+    TTL = ttl(a)      ; all tuples of elem 'a' should have same TTL
+    A := A U {<tuple, TTL>}  ; time of death is set to now + TTL
+
+REMOVE(a):
+    tuple = (e, t, rc, rs, t', rc', rs')
+    TTL = ttl(a)      ; all tuples of elem 'a' should have same TTL
+    R := R U {<tuple, TTL>}  ; time of death is set to now + TTL
+
+MERGE(rc1, rc2):      ; pull updates from cluster 1 to cluster 2
+    ; for each update tuple time of death is set to local now + TTL' in rc2, where TTL' is the remaining TTL of the tuple in rc1
+    A2 := A2 U {<tuple, TTL'> | <tuple, _> in A1}
+    R2 := R2 U {<tuple, TTL'> | <tuple, _> in R1}
+\end{spverbatim}
+
+\clearpage
+
+\section{Tests}
+
+\begin{spverbatim}
+A. Single-store clusters
+	
+	Basic tests
+	1. ADD
+	2. ADD + RMV
+	3. ADD + ADD + RMV
+	4. RMV + ADD
+	5. ADD propagates directly
+	6. ADD propagates indirectly
+	7. RMV propagates directly
+	8. RMV propagates indirectly
+	9. ADD || RMV directly
+	10. ADD || RMV indirectly
+	
+	Store failures
+	1. ADD propagation stops at the failed store
+	2. RMV propagation stops at the failed store
+	3. ADD propagates after source fails
+	4. RMV propagates after source fails
+	
+	Garbage collection
+	1. ADD
+	2. ADD + RMV
+	3. RMV + ADD
+	4. ADD expires after propagation
+	5. ADD + RMV expires after propagation
+	6. RMV + ADD expires after propagation
+	
+B. Multi-store clusters
+	
+	Basic tests
+	1 - 10 same as single-store clusters
+	
+	Store failures
+	1 - 4 same as single-store clusters
+	5. Store failures in the source cluster
+	6. Store failures in the destination cluster
+	
+	Garbage collection
+	1 - 7 same as single-store clusters
+\end{spverbatim}
